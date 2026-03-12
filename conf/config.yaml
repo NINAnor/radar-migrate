@@ -1,0 +1,3 @@
+debug: true
+duckdb_path: ":memory:"
+overwrite: true

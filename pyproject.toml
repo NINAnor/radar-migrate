@@ -1,0 +1,46 @@
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[project]
+authors = [
+  {name = "ninanor", email = "ninanor@nina.no"}
+]
+# PEP 621 project metadata
+# See https://www.python.org/dev/peps/pep-0621/
+dependencies = [
+  "django-environ",
+  "duckdb==1.5.0",
+  "hydra-core>=1.3.2",
+  "jinja2>=3.1.6",
+  "pyarrow>=23.0.1",
+  "structlog>=25.5.0",
+  "typer>=0.24.1",
+]
+description = ""
+license = "GPL-3.0+"
+name = "radar_migrate"
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.1.0"
+
+
+[project.scripts]
+radar-migration = "radar_migrate.main:cli"
+
+[dependency-groups]
+dev = [
+  "deptry",
+  "hatchling>=1.29.0",
+]
+
+[tool.ruff]
+fix = true
+
+[tool.ruff.lint]
+ignore = ["COM812"]
+select = ["E", "W", "I", "F", "UP", "S", "B", "A", "COM", "LOG", "PTH", "Q"]
+
+[tool.uv]
+package = true

@@ -1,0 +1,50 @@
+db:
+  username:
+  password:
+  host:
+  port:
+  database:
+
+bucket:
+  name:
+  endpoint:
+  secret_key:
+  access_key:
+  url_style:
+
+deployment_id: 
+
+schemas:
+  public:
+    target: raw
+    tables:
+      classification:
+      radar:
+      radartype:
+      tracking_metainfo:
+      get_pixels_with_tracks:
+      ip_metainfo:
+      messages:
+      systemstate:
+      systemstatelog:
+        date_partition_column: timestamp
+      weather:
+        date_partition_column: timestamp
+      track:
+        date_partition_column: timestamp_start
+      trackestimate:
+        date_partition_column: timestamp
+      fmcwsensormeasurement:
+        date_partition_column: timestamp
+      observation:
+        date_partition_column: timestamp
+      image:
+        date_partition_column: timestamp
+      
+  config:
+    target: raw
+    tables:
+      species:
+
+  added:
+    target: processed
