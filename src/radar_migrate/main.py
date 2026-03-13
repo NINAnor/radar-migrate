@@ -66,7 +66,8 @@ def cli(cfg: DictConfig) -> None:
         """
         ).render(cfg=cfg)
     )
-    conn.sql("ATTACH '' AS pg (TYPE postgres, secret pg_secret); use pg;")
+    conn.sql("ATTACH '' AS pg_db (TYPE postgres, secret pg_secret)")
+    conn.sql(f"use pg_db.{cfg.radar.db.schema}")
 
     conn.install_extension("httpfs")
     conn.load_extension("httpfs")
@@ -89,38 +90,48 @@ def cli(cfg: DictConfig) -> None:
             "ignore" in cfg.radar.schemas[schema_name]
             and cfg.radar.schemas[schema_name].ignore
         ):
-            logging.info("Skipping schema marked as ignore", schema=schema_name)
+            logger.info("Skipping schema marked as ignore", schema=schema_name)
             continue
         logger.info("Processing schema", schema=schema_name)
-        tables = conn.execute(
+
+        # Check if tables is configured - require explicit configuration
+        if "tables" not in schema:
+            logger.info(
+                "Skipping schema without tables configuration", schema=schema_name
+            )
+            continue
+
+        process_all_tables = schema.tables == "*"
+
+        db_tables = conn.execute(
             "SELECT * FROM (SHOW ALL TABLES) WHERE schema = $1", [schema_name]
         ).fetch_arrow_table()
-        for table in tables.to_pylist():
-            if (
-                "tables" in schema
-                and schema.tables.keys()
-                and (
-                    table["name"] not in list(map(lambda t: t, schema.tables.keys()))
-                    or (
-                        "ignore" in schema.tables[table["name"]]
-                        and schema.tables[table["name"]].ignore
-                    )
-                )
-            ):
-                logger.debug("Skipping table", table=table["name"])
-                continue
 
-            table_conf = (
-                schema.tables[table["name"]]
-                if "tables" in schema and schema.tables.keys()
-                else None
-            )
+        for table in db_tables.to_pylist():
+            table_name = table["name"]
+
+            if process_all_tables:
+                # Process all tables from database
+                table_conf = None
+
+            else:
+                # Only process explicitly listed tables
+                if table_name not in schema.tables:
+                    logger.debug("Skipping table not in tables list", table=table_name)
+                    continue
+
+                table_conf = schema.tables[table_name]
+
+                # Check if table is marked as ignore
+                if table_conf and "ignore" in table_conf and table_conf.ignore:
+                    logger.debug("Skipping table marked as ignore", table=table_name)
+                    continue
             target = schema.target if "target" in schema else schema_name
 
-            output_path = f"s3://{cfg.radar.bucket.name}/tables/deployment={cfg.radar.deployment_id}/{target}/{table['name']}"
+            output_path = f"s3://{cfg.radar.bucket.name}/tables/deployment={cfg.radar.deployment_id}/{target}/{table_name}"
             logger.info(
                 "Exporting table",
-                table_name=table["name"],
+                table_name=table_name,
                 table_conf=table_conf,
                 output_path=output_path,
                 table=table,
@@ -133,7 +144,7 @@ def cli(cfg: DictConfig) -> None:
                 )
                 export_date_partitioned_table(
                     conn,
-                    f"{schema_name}.{table['name']}",
+                    f"{schema_name}.{table_name}",
                     output_path,
                     table_conf.date_partition_column,
                     overwrite=cfg.overwrite,
@@ -141,7 +152,7 @@ def cli(cfg: DictConfig) -> None:
             else:
                 export_table(
                     conn,
-                    f"{schema_name}.{table['name']}",
+                    f"{schema_name}.{table_name}",
                     output_path + ".parquet",
                     overwrite=cfg.overwrite,
                 )
