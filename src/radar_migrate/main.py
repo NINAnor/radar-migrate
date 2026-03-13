@@ -85,20 +85,46 @@ def cli(cfg: DictConfig) -> None:
     )
 
     for schema_name, schema in cfg.radar.schemas.items():
+        if (
+            "ignore" in cfg.radar.schemas[schema_name]
+            and cfg.radar.schemas[schema_name].ignore
+        ):
+            logging.info("Skipping schema marked as ignore", schema=schema_name)
+            continue
         logger.info("Processing schema", schema=schema_name)
         tables = conn.execute(
             "SELECT * FROM (SHOW ALL TABLES) WHERE schema = $1", [schema_name]
         ).fetch_arrow_table()
         for table in tables.to_pylist():
-            if table["name"] not in list(map(lambda t: t, schema.tables.keys())):
-                # logger.debug("Skipping table not in config", table=table["name"])
+            if (
+                "tables" in schema
+                and schema.tables.keys()
+                and (
+                    table["name"] not in list(map(lambda t: t, schema.tables.keys()))
+                    or (
+                        "ignore" in schema.tables[table["name"]]
+                        and schema.tables[table["name"]].ignore
+                    )
+                )
+            ):
+                logger.debug("Skipping table", table=table["name"])
                 continue
 
-            table_conf = schema.tables[table["name"]]
+            table_conf = (
+                schema.tables[table["name"]]
+                if "tables" in schema and schema.tables.keys()
+                else None
+            )
             target = schema.target if "target" in schema else schema_name
 
             output_path = f"s3://{cfg.radar.bucket.name}/tables/deployment={cfg.radar.deployment_id}/{target}/{table['name']}"
-            logger.info("Exporting table", table=table, output_path=output_path)
+            logger.info(
+                "Exporting table",
+                table_name=table["name"],
+                table_conf=table_conf,
+                output_path=output_path,
+                table=table,
+            )
 
             if table_conf and "date_partition_column" in table_conf:
                 logger.debug(
