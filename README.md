@@ -1,53 +1,135 @@
-# radar-migration
+# radar-migrate
 
-## Setup
-Install `uv`: https://docs.astral.sh/uv/getting-started/installation/
+A tool for migrating PostgreSQL/PostGIS radar data to cloud storage (S3) as Parquet files and Cloud Optimized GeoTIFFs (COG).
+
+## Features
+
+- Export PostgreSQL tables to Parquet files on S3
+- Export PostGIS raster tables to Cloud Optimized GeoTIFFs on S3
+- Date-partitioned exports for time-series data
+- Configurable schema and table selection via Hydra YAML configs
+- Support for multiple deployment configurations
+
+## Installation
+
+Requires [pixi](https://pixi.sh/) (recommended) or [uv](https://docs.astral.sh/uv/):
 
 ```bash
-git init
-uv sync --dev
-git add .
-git commit -m "Initial commit"
-uv run pre-commit install # optional
+# With pixi
+pixi install
 ```
 
+## Usage
 
-### Run
-To execute your software you have two options:
+Run with a radar configuration:
 
-**Option 1: Direct execution**
 ```bash
-uv run main.py
+pixi run radar-migration +radar=<config-name>
 ```
 
-**Option 2: Run as installed package**
+For example:
 ```bash
-uvx --from . radar-migration
+pixi run radar-migration +radar=flex-sommer-2020
+pixi run radar-migration +radar=merlin-bremanger-2016
 ```
 
-### Development
-Just run `uv run main.py` and you are good to go!
+### Command-line options
 
-### Update from template
-To update your project with the latest changes from the template, run:
+Override configuration values:
 ```bash
-uvx --with copier-template-extensions copier update --trust
+pixi run radar-migration +radar=flex-sommer-2020 overwrite=false debug=false
 ```
 
-You can keep your previous answers by using:
+## Configuration
+
+Configuration files are in `conf/radar/`. Each deployment needs a YAML file.
+
+### Structure
+
+```yaml
+defaults:
+  - base        # Base defaults
+
+db:
+  database: my_database
+  schema: public
+
+deployment_id: my-deployment
+
+schemas:
+  my_schema:
+    target: raw           # Output folder name (default: schema name)
+    tables: "*"           # Export all tables
+    # OR list specific tables:
+    tables:
+      table1:             # No special config
+      table2:
+        ignore: true      # Skip this table
+      table3:
+        date_partition_column: timestamp  # Partition by date
+      raster_table:
+        raster: rast      # Export as COG (column name)
+```
+
+### Schema options
+
+| Option | Description |
+|--------|-------------|
+| `ignore: true` | Skip the entire schema |
+| `target` | Output folder name (defaults to schema name) |
+| `tables: "*"` | Export all tables in schema |
+| `tables: {...}` | Export only listed tables |
+
+### Table options
+
+| Option | Description |
+|--------|-------------|
+| `ignore: true` | Skip this table |
+| `date_partition_column` | Partition Parquet by this date column |
+| `raster` | Export as COG using this raster column name |
+
+### Database config
+
+```yaml
+db:
+  host: localhost
+  port: 5432
+  database: mydb
+  username: user
+  password: pass    # Optional
+  schema: public    # Default schema for DuckDB connection
+```
+
+### S3 bucket config
+
+```yaml
+bucket:
+  name: my-bucket
+  endpoint: s3.example.com
+  access_key: ACCESS_KEY
+  secret_key: SECRET_KEY
+  url_style: path   # or "virtual"
+```
+
+## Output structure
+
+Files are written to S3 with the following structure:
+
+```
+s3://<bucket>/tables/deployment=<deployment_id>/<target>/<table>.parquet
+s3://<bucket>/rasters/deployment=<deployment_id>/<target>/<table>.tif
+```
+
+Date-partitioned tables:
+```
+s3://<bucket>/tables/deployment=<deployment_id>/<target>/<table>/<column>_year=YYYY/<column>_month=MM/<column>_day=DD/
+```
+
+## Development
+
 ```bash
-uvx --with copier-template-extensions copier update --trust --defaults
+pixi run radar-migration +radar=<config>
 ```
-
-### (Optional) pre-commit
-pre-commit is a set of tools that help you ensure code quality. It runs every time you make a commit.
-
-First, install pre-commit:
-```bash
-uv tool install pre-commit
-```
-
-Then install pre-commit hooks:
 ```bash
 pre-commit install
 ```
@@ -68,15 +150,5 @@ If you are using visual studio code install the recommended extensions
 
 
 ### Tools installed
-- uv
+- pixi
 - pre-commit (optional)
-
-#### What is an environment variable? and why should I use them?
-Environment variables are variables that are not populated in your code but rather in the environment
-that you are running your code. This is extremely useful mainly for two reasons:
-- security, you can share your code without sharing your passwords/credentials
-- portability, you can avoid using hard-coded values like file-system paths or folder names
-
-you can place your environment variables in a file called `.env`, the `main.py` will read from it. Remember to:
-- NEVER commit your `.env`
-- Keep a `.env.example` file updated with the variables that the software expects
