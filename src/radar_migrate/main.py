@@ -12,7 +12,13 @@ import structlog
 from jinja2 import Template
 from omegaconf import DictConfig
 
-from radar_migrate.export import export_date_partitioned_table, export_table
+from radar_migrate.export import (
+    PostgresConnectionInfo,
+    S3ConnectionInfo,
+    export_date_partitioned_table,
+    export_raster_table,
+    export_table,
+)
 
 env = environ.Env()
 BASE_DIR = pathlib.Path(__file__).parent
@@ -137,7 +143,35 @@ def cli(cfg: DictConfig) -> None:
                 table=table,
             )
 
-            if table_conf and "date_partition_column" in table_conf:
+            if table_conf and "raster" in table_conf:
+                logger.debug(
+                    "using raster export",
+                    raster_column=table_conf.raster,
+                )
+                output_path = f"s3://{cfg.radar.bucket.name}/rasters/deployment={cfg.radar.deployment_id}/{table_conf.target if 'target' in table_conf else target}/{table_name}"  # noqa: E501
+                pg_conn_info = PostgresConnectionInfo(
+                    host=cfg.radar.db.host,
+                    port=cfg.radar.db.port,
+                    database=cfg.radar.db.database,
+                    username=cfg.radar.db.username,
+                    password=cfg.radar.db.get("password"),
+                    schema=schema_name,
+                )
+                s3_conn_info = S3ConnectionInfo(
+                    endpoint=cfg.radar.bucket.endpoint,
+                    access_key=cfg.radar.bucket.access_key,
+                    secret_key=cfg.radar.bucket.secret_key,
+                    url_style=cfg.radar.bucket.url_style,
+                )
+                export_raster_table(
+                    pg_conn_info,
+                    table_name,
+                    output_path + ".tif",
+                    logger=logger,
+                    s3_conn_info=s3_conn_info,
+                    raster_column=table_conf.raster,
+                )
+            elif table_conf and "date_partition_column" in table_conf:
                 logger.debug(
                     "using partitioned export",
                     date_partition_column=table_conf.date_partition_column,

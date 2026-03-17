@@ -175,4 +175,7 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 outputs
-replications
+replications# pixi environments
+.pixi/*
+!.pixi/config.toml
+.tmp
