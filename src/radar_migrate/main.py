@@ -110,7 +110,7 @@ def cli(cfg: DictConfig) -> None:
             )
             continue
 
-        process_all_tables = schema.tables == "*"
+        process_all_tables = "*" in schema.tables
 
         db_tables = conn.execute(
             "SELECT * FROM (SHOW ALL TABLES) WHERE schema = $1", [schema_name]
@@ -120,8 +120,12 @@ def cli(cfg: DictConfig) -> None:
             table_name = table["name"]
 
             if process_all_tables:
-                # Process all tables from database
-                table_conf = None
+                # Process all tables from database, use "*" config as default
+                # but allow specific table overrides
+                if table_name in schema.tables:
+                    table_conf = schema.tables[table_name]
+                else:
+                    table_conf = schema.tables["*"]
 
             else:
                 # Only process explicitly listed tables
@@ -131,10 +135,10 @@ def cli(cfg: DictConfig) -> None:
 
                 table_conf = schema.tables[table_name]
 
-                # Check if table is marked as ignore
-                if table_conf and "ignore" in table_conf and table_conf.ignore:
-                    logger.debug("Skipping table marked as ignore", table=table_name)
-                    continue
+            # Check if table is marked as ignore
+            if table_conf and "ignore" in table_conf and table_conf.ignore:
+                logger.debug("Skipping table marked as ignore", table=table_name)
+                continue
             target = schema.target if "target" in schema else schema_name
 
             output_path = f"s3://{cfg.radar.bucket.name}/tables/deployment={cfg.radar.deployment_id}/{target}/{table_name}"

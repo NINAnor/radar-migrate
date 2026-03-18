@@ -59,8 +59,11 @@ deployment_id: my-deployment
 schemas:
   my_schema:
     target: raw           # Output folder name (default: schema name)
-    tables: "*"           # Export all tables
-    # OR list specific tables:
+    tables:
+      "*":                # Export all tables (can still override specific ones)
+      specific_table:     # Override config for this table
+        date_partition_column: timestamp
+    # OR list only specific tables:
     tables:
       table1:             # No special config
       table2:
@@ -77,7 +80,7 @@ schemas:
 |--------|-------------|
 | `ignore: true` | Skip the entire schema |
 | `target` | Output folder name (defaults to schema name) |
-| `tables: "*"` | Export all tables in schema |
+| `tables: {"*": ...}` | Export all tables in schema |
 | `tables: {...}` | Export only listed tables |
 
 ### Table options
