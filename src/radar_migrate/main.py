@@ -18,6 +18,7 @@ from radar_migrate.export import (
     export_date_partitioned_table,
     export_raster_table,
     export_table,
+    get_geometry_crs,
 )
 
 env = environ.Env()
@@ -57,6 +58,8 @@ def cli(cfg: DictConfig) -> None:
     conn.execute("SET enable_progress_bar = true")
     conn.install_extension("postgres")
     conn.load_extension("postgres")
+    conn.install_extension("spatial")
+    conn.load_extension("spatial")
 
     conn.sql(
         Template(
@@ -135,6 +138,7 @@ def cli(cfg: DictConfig) -> None:
             target = schema.target if "target" in schema else schema_name
 
             output_path = f"s3://{cfg.radar.bucket.name}/tables/deployment={cfg.radar.deployment_id}/{target}/{table_name}"
+
             logger.info(
                 "Exporting table",
                 table_name=table_name,
@@ -172,6 +176,9 @@ def cli(cfg: DictConfig) -> None:
                     raster_column=table_conf.raster,
                 )
             elif table_conf and "date_partition_column" in table_conf:
+                geometry_crs = get_geometry_crs(conn, schema_name, table_name)
+                if geometry_crs:
+                    logger.debug("Detected geometry CRS", crs=geometry_crs)
                 logger.debug(
                     "using partitioned export",
                     date_partition_column=table_conf.date_partition_column,
@@ -181,13 +188,18 @@ def cli(cfg: DictConfig) -> None:
                     f"{schema_name}.{table_name}",
                     output_path,
                     table_conf.date_partition_column,
+                    geometry_crs=geometry_crs,
                     overwrite=cfg.overwrite,
                 )
             else:
+                geometry_crs = get_geometry_crs(conn, schema_name, table_name)
+                if geometry_crs:
+                    logger.debug("Detected geometry CRS", crs=geometry_crs)
                 export_table(
                     conn,
                     f"{schema_name}.{table_name}",
                     output_path + ".parquet",
+                    geometry_crs=geometry_crs,
                     overwrite=cfg.overwrite,
                 )
             logger.info("done")

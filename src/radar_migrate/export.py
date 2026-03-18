@@ -40,6 +40,52 @@ class PostgresConnectionInfo:
         )
 
 
+def get_geometry_crs(
+    conn: duckdb.DuckDBPyConnection,
+    schema_name: str,
+    table_name: str,
+) -> dict[str, int | None]:
+    """
+    Get the SRID of all geometry columns in a PostGIS table.
+
+    Queries the PostGIS geometry_columns view to get SRID for each geometry column.
+
+    Args:
+        conn: A DuckDB connection object with PostgreSQL attached.
+        schema_name: The schema name.
+        table_name: The name of the table (without schema).
+
+    Returns:
+        A dict mapping geometry column names to their SRID.
+    """
+    result = {}
+
+    # Query geometry_columns view for all geometry columns in the table
+    sql = """
+        SELECT f_geometry_column, srid
+        FROM geometry_columns
+        WHERE f_table_schema = $1 AND f_table_name = $2
+        UNION
+        SELECT f_geography_column, srid
+        FROM geography_columns
+        WHERE f_table_schema = $1 AND f_table_name = $2
+    """
+
+    try:
+        rows = conn.execute(sql, [schema_name, table_name]).fetchall()
+        for row in rows:
+            column_name, srid = row
+            if srid and srid != 0:
+                result[column_name] = srid
+            else:
+                result[column_name] = None
+    except Exception:  # noqa: BLE001
+        # Table might not have geometry or query failed
+        return {}
+
+    return result
+
+
 @dataclass
 class S3ConnectionInfo:
     """S3 connection information for GDAL."""
@@ -71,10 +117,45 @@ def _s3_to_vsis3_path(s3_path: str) -> str:
     return s3_path
 
 
+def _build_geometry_select(
+    table_name: str,
+    geometry_crs: dict[str, int | None] | None,
+) -> str:
+    """
+    Build a SELECT statement that sets CRS on geometry columns.
+
+    Args:
+        table_name: The fully qualified table name.
+        geometry_crs: A dict mapping geometry column names to their SRID.
+
+    Returns:
+        A SQL SELECT statement.
+    """
+    if not geometry_crs:
+        return f"SELECT * FROM {table_name}"  # noqa: S608
+
+    # Build column expressions, wrapping geometry columns with ST_SetCRS
+    geom_columns = []
+    for col, srid in geometry_crs.items():
+        if srid is not None:
+            geom_columns.append(f"ST_SetCRS({col}, 'EPSG:{srid}') AS {col}")
+        else:
+            geom_columns.append(col)
+
+    geom_col_names = set(geometry_crs.keys())
+    # Select all non-geometry columns with *, then replace geometry columns
+    # We need to exclude geometry columns from * and add them back with ST_SetCRS
+    return (
+        f"SELECT * EXCLUDE ({', '.join(geom_col_names)}), "  # noqa: S608
+        f"{', '.join(geom_columns)} FROM {table_name}"
+    )
+
+
 def export_table(
     conn: duckdb.DuckDBPyConnection,
     table_name: str,
     output_path: str,
+    geometry_crs: dict[str, int | None] | None = None,
     overwrite: bool = True,
 ) -> None:
     """
@@ -84,10 +165,18 @@ def export_table(
         conn: A DuckDB connection object.
         table_name: The name of the table to export.
         output_path: The path where the Parquet file will be saved.
+        geometry_crs: A dict mapping geometry column names to their SRID.
+        overwrite: Whether to overwrite existing files.
     """
-    conn.table(table_name).write_parquet(
-        output_path, compression="zstd", overwrite=overwrite
-    )
+    if geometry_crs:
+        sql = _build_geometry_select(table_name, geometry_crs)
+        conn.sql(sql).write_parquet(
+            output_path, compression="zstd", overwrite=overwrite
+        )
+    else:
+        conn.table(table_name).write_parquet(
+            output_path, compression="zstd", overwrite=overwrite
+        )
 
 
 def export_raster_table(
@@ -164,6 +253,7 @@ def export_date_partitioned_table(
     table_name: str,
     output_path: str,
     date_column: str,
+    geometry_crs: dict[str, int | None] | None = None,
     overwrite: bool = True,
 ) -> None:
     """
@@ -174,20 +264,41 @@ def export_date_partitioned_table(
         table_name: The name of the table to export.
         output_path: The path where the Parquet files will be saved.
         date_column: The name of the date column to partition by.
+        geometry_crs: A dict mapping geometry column names to their SRID.
         overwrite: Whether to overwrite existing files.
     """
 
     DATE_PARTS = ["year", "month", "day"]
     partition_columns = [f"{date_column}_{date_part}" for date_part in DATE_PARTS]
 
-    partitions = [
-        duckdb.SQLExpression(f"date_part('{date_part}', {date_column})").alias(
-            f"{date_column}_{date_part}"
-        )
+    date_part_expressions = ", ".join(
+        f"date_part('{date_part}', {date_column}) AS {date_column}_{date_part}"
         for date_part in DATE_PARTS
-    ]
+    )
 
-    t = conn.table(table_name).select(duckdb.StarExpression(), *partitions)
+    if geometry_crs:
+        # Build geometry column expressions with ST_SetCRS
+        geom_columns = []
+        for col, srid in geometry_crs.items():
+            if srid is not None:
+                geom_columns.append(f"ST_SetCRS({col}, 'EPSG:{srid}') AS {col}")
+            else:
+                geom_columns.append(col)
+        geom_col_names = set(geometry_crs.keys())
+        sql = (
+            f"SELECT * EXCLUDE ({', '.join(geom_col_names)}), "  # noqa: S608
+            f"{', '.join(geom_columns)}, {date_part_expressions} "
+            f"FROM {table_name}"
+        )
+        t = conn.sql(sql)
+    else:
+        partitions = [
+            duckdb.SQLExpression(f"date_part('{date_part}', {date_column})").alias(
+                f"{date_column}_{date_part}"
+            )
+            for date_part in DATE_PARTS
+        ]
+        t = conn.table(table_name).select(duckdb.StarExpression(), *partitions)
 
     t.write_parquet(
         output_path,
