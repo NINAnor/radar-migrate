@@ -1534,7 +1534,7 @@ packages:
 - pypi: ./
   name: radar-migrate
   version: 0.1.0
-  sha256: 383bc188e226d595f7d89bda72e3a95f20d82a8d4ad6734c41fbb6b4fd4b7fc2
+  sha256: 857de52bf9e56694b3f16b49780901911e191c1f68560e0b7e31aa516dd71796
   requires_dist:
   - django-environ
   - duckdb==1.5.0
@@ -1543,7 +1543,7 @@ packages:
   - pyarrow>=23.0.1
   - structlog>=25.5.0
   - typer>=0.24.1
-  requires_python: '>=3.10,<=3.13'
+  requires_python: '>=3.10,<=3.13.1'
   editable: true
 - conda: https://conda.anaconda.org/conda-forge/linux-64/readline-8.3-h853b02a_0.conda
   sha256: 12ffde5a6f958e285aa22c191ca01bbd3d6e710aa852e00618fa6ddc59149002

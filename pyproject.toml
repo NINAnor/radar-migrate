@@ -22,7 +22,7 @@ description = ""
 license = "GPL-3.0+"
 name = "radar_migrate"
 readme = "README.md"
-requires-python = ">=3.10,<=3.13"
+requires-python = ">=3.10,<=3.13.1"
 version = "0.1.0"
 
 

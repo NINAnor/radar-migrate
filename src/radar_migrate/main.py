@@ -16,6 +16,7 @@ from radar_migrate.export import (
     PostgresConnectionInfo,
     S3ConnectionInfo,
     export_date_partitioned_table,
+    export_query_batched,
     export_raster_table,
     export_table,
     get_geometry_crs,
@@ -54,6 +55,7 @@ def cli(cfg: DictConfig) -> None:
 
     logger.debug("Configuration", config=cfg)
 
+    logger.debug("Duckdb version", version=duckdb.__version__)
     conn = duckdb.connect(cfg.duckdb_path)
     conn.execute("SET enable_progress_bar = true")
     conn.install_extension("postgres")
@@ -194,6 +196,23 @@ def cli(cfg: DictConfig) -> None:
                     table_conf.date_partition_column,
                     geometry_crs=geometry_crs,
                     overwrite=cfg.overwrite,
+                )
+            elif table_conf and "chunk_size" in table_conf:
+                geometry_crs = get_geometry_crs(conn, schema_name, table_name)
+                if geometry_crs:
+                    logger.debug("Detected geometry CRS", crs=geometry_crs)
+                logger.debug(
+                    "using batched export",
+                    chunk_size=table_conf.chunk_size,
+                )
+                query = f"SELECT * FROM {schema_name}.{table_name}"  # noqa: S608
+                export_query_batched(
+                    conn,
+                    query,
+                    output_path,
+                    batch_size=table_conf.chunk_size,
+                    geometry_crs=geometry_crs,
+                    logger=logger,
                 )
             else:
                 geometry_crs = get_geometry_crs(conn, schema_name, table_name)

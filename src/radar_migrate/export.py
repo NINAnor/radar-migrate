@@ -117,40 +117,6 @@ def _s3_to_vsis3_path(s3_path: str) -> str:
     return s3_path
 
 
-def _build_geometry_select(
-    table_name: str,
-    geometry_crs: dict[str, int | None] | None,
-) -> str:
-    """
-    Build a SELECT statement that sets CRS on geometry columns.
-
-    Args:
-        table_name: The fully qualified table name.
-        geometry_crs: A dict mapping geometry column names to their SRID.
-
-    Returns:
-        A SQL SELECT statement.
-    """
-    if not geometry_crs:
-        return f"SELECT * FROM {table_name}"  # noqa: S608
-
-    # Build column expressions, wrapping geometry columns with ST_SetCRS
-    geom_columns = []
-    for col, srid in geometry_crs.items():
-        if srid is not None:
-            geom_columns.append(f"ST_SetCRS({col}, 'EPSG:{srid}') AS {col}")
-        else:
-            geom_columns.append(col)
-
-    geom_col_names = set(geometry_crs.keys())
-    # Select all non-geometry columns with *, then replace geometry columns
-    # We need to exclude geometry columns from * and add them back with ST_SetCRS
-    return (
-        f"SELECT * EXCLUDE ({', '.join(geom_col_names)}), "  # noqa: S608
-        f"{', '.join(geom_columns)} FROM {table_name}"
-    )
-
-
 def export_table(
     conn: duckdb.DuckDBPyConnection,
     table_name: str,
@@ -168,15 +134,84 @@ def export_table(
         geometry_crs: A dict mapping geometry column names to their SRID.
         overwrite: Whether to overwrite existing files.
     """
+    sql = f"SELECT * FROM {table_name}"  # noqa: S608
     if geometry_crs:
-        sql = _build_geometry_select(table_name, geometry_crs)
-        conn.sql(sql).write_parquet(
-            output_path, compression="zstd", overwrite=overwrite
-        )
-    else:
-        conn.table(table_name).write_parquet(
-            output_path, compression="zstd", overwrite=overwrite
-        )
+        sql = _build_geometry_select_from_query(sql, geometry_crs)
+    conn.sql(sql).write_parquet(output_path, compression="zstd", overwrite=overwrite)
+
+
+def _build_geometry_select_from_query(
+    query: str,
+    geometry_crs: dict[str, int | None],
+) -> str:
+    """
+    Wrap a query to set CRS on geometry columns.
+
+    Args:
+        query: The original SQL query.
+        geometry_crs: A dict mapping geometry column names to their SRID.
+
+    Returns:
+        A SQL SELECT statement wrapping the query with ST_SetCRS.
+    """
+    geom_columns = []
+    for col, srid in geometry_crs.items():
+        if srid is not None:
+            geom_columns.append(f"ST_SetCRS({col}, 'EPSG:{srid}') AS {col}")
+        else:
+            geom_columns.append(col)
+
+    geom_col_names = set(geometry_crs.keys())
+    return (
+        f"SELECT * EXCLUDE ({', '.join(geom_col_names)}), "  # noqa: S608
+        f"{', '.join(geom_columns)} FROM ({query}) AS _subquery"
+    )
+
+
+def export_query_batched(
+    conn: duckdb.DuckDBPyConnection,
+    query: str,
+    output_path: str,
+    batch_size: int = 100000,
+    compression: str = "zstd",
+    geometry_crs: dict[str, int | None] | None = None,
+    logger: logging.Logger = None,
+) -> int:
+    """
+    Export a query result to Parquet files in batches.
+
+    Converts the query result to record batches of the given size,
+    iterates through them, and exports each batch using DuckDB write_parquet.
+
+    Args:
+        conn: A DuckDB connection object.
+        query: The SQL query to execute.
+        output_path: The base path for output Parquet files.
+            Each batch will be written to {output_path}/batch_{i}.parquet
+        batch_size: The number of rows per batch (default: 100000).
+        compression: Compression algorithm (default: zstd).
+        geometry_crs: A dict mapping geometry column names to their SRID.
+        logger: Logger instance for reporting progress.
+
+    Returns:
+        The number of batches exported.
+    """
+    # Wrap query with ST_SetCRS if geometry_crs is provided
+    if geometry_crs:
+        query = _build_geometry_select_from_query(query, geometry_crs)
+
+    if logger:
+        logger.debug("Executing query and exporting in batches", batch_size=batch_size)
+
+    conn.sql(f"""
+             COPY ({query}) TO '{output_path.replace(".parquet", "")}' (
+                FORMAT 'parquet',
+                COMPRESSION '{compression}',
+                ROW_GROUPS_PER_FILE {batch_size},
+                OVERWRITE,
+                PER_THREAD_OUTPUT
+             )
+             """)
 
 
 def export_raster_table(
@@ -276,31 +311,11 @@ def export_date_partitioned_table(
         for date_part in DATE_PARTS
     )
 
+    sql = f"SELECT *, {date_part_expressions} FROM {table_name}"  # noqa: S608
     if geometry_crs:
-        # Build geometry column expressions with ST_SetCRS
-        geom_columns = []
-        for col, srid in geometry_crs.items():
-            if srid is not None:
-                geom_columns.append(f"ST_SetCRS({col}, 'EPSG:{srid}') AS {col}")
-            else:
-                geom_columns.append(col)
-        geom_col_names = set(geometry_crs.keys())
-        sql = (
-            f"SELECT * EXCLUDE ({', '.join(geom_col_names)}), "  # noqa: S608
-            f"{', '.join(geom_columns)}, {date_part_expressions} "
-            f"FROM {table_name}"
-        )
-        t = conn.sql(sql)
-    else:
-        partitions = [
-            duckdb.SQLExpression(f"date_part('{date_part}', {date_column})").alias(
-                f"{date_column}_{date_part}"
-            )
-            for date_part in DATE_PARTS
-        ]
-        t = conn.table(table_name).select(duckdb.StarExpression(), *partitions)
+        sql = _build_geometry_select_from_query(sql, geometry_crs)
 
-    t.write_parquet(
+    conn.sql(sql).write_parquet(
         output_path,
         partition_by=partition_columns,
         compression="zstd",
